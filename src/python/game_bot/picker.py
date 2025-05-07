@@ -1,9 +1,13 @@
+import datetime
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk, ImageGrab
+import traceback
+
+from PIL import Image, ImageGrab, ImageTk
+from game_bot.picture import capture_screen, extract_text
 import numpy as np
-from .picture import capture_screen
+import yaml
 
 class ScreenshotPicker:
     def __init__(self, root):
@@ -11,6 +15,8 @@ class ScreenshotPicker:
         self.root.title("Screenshot Picker")
         self.root.geometry("1200x1000")
         self.root.configure(bg='#1e1e1e')
+        self.config_filename = os.path.expanduser("~/.picker.yml")
+        self.load_config()
         
         # Modern font settings
         self.font_normal = ('Segoe UI', 9)
@@ -30,7 +36,21 @@ class ScreenshotPicker:
         # Keyboard bindings
         self.root.bind("<Control_L>", lambda e: self.set_ctrl_pressed(True))
         self.root.bind("<KeyRelease-Control_L>", lambda e: self.set_ctrl_pressed(False))
-        
+    
+    def load_config(self):
+        if os.path.exists(self.config_filename):
+            with open(self.config_filename, 'r') as f:
+                self.config = yaml.load(f, Loader=yaml.Loader)
+        else:
+            self.config = {
+                'last_save_path': os.path.expanduser(os.path.join("~","Downloads"))
+            }
+            self.save_config()
+
+    def save_config(self):
+        with open(self.config_filename, 'w') as f:
+            yaml.dump(self.config, f, Dumper = yaml.Dumper)
+
     def set_ctrl_pressed(self, pressed):
         self.ctrl_pressed = pressed
         if pressed:
@@ -71,16 +91,14 @@ class ScreenshotPicker:
         path_frame.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         
         self.save_path = tk.Entry(path_frame, bg='#3d3d3d', fg='#e0e0e0', insertbackground='white')
-        self.save_path.insert(0, os.path.expanduser(os.path.join("~","Downloads")))  # Default to Downloads
+        self.save_path.insert(0, self.config["last_save_path"])
         self.save_path.pack(side=tk.LEFT, expand=True, fill=tk.X)
         
         browse_btn = tk.Button(path_frame, text="Browse...", 
                              command=self.browse_save_path, **button_style)
         browse_btn.pack(side=tk.LEFT, padx=5)
         
-        # Second row - pixel info
-        
-        
+        # Second row - pixel info        
         # Modern label styling
         label_style = {
             'font': self.font_normal,
@@ -91,6 +109,8 @@ class ScreenshotPicker:
         # First row - pixel info
         self.pixel_info = tk.Label(control_frame, text="", anchor=tk.W, **label_style)
         self.pixel_info.pack(fill=tk.X, expand=True)
+        self.selected_info = tk.Label(control_frame, text="", anchor=tk.W, **label_style)
+        self.selected_info.pack(fill=tk.X, expand=True)
         
         # Second row - info frame
         info_frame = tk.Frame(control_frame, bg='#2d2d2d')
@@ -222,10 +242,9 @@ class ScreenshotPicker:
         self.canvas.xview_moveto(0)
         self.canvas.yview_moveto(0)
 
-    def view_selection(self):
+    def crop_selected(self):
         if not self.current_image or not self.selection_rect:
             return
-            
         try:
             # Get canvas scroll position
             x_scroll = self.canvas.xview()[0] * self.current_image.width * self.scale_factor
@@ -254,6 +273,21 @@ class ScreenshotPicker:
             original_height = self.current_image.height
             
             cropped = self.current_image.crop((x1, y1, x2, y2))
+            
+            return cropped, original_width, original_height, (x1, y1, x2, y2)
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Error", str(e))
+            return None, None, None, None
+    
+    def view_selection(self):
+        if not self.current_image or not self.selection_rect:
+            return
+        
+        try:
+            cropped, original_width, original_height, rect = self.crop_selected()
+            if cropped is None: return
+            x1, y1, x2, y2 = rect
             self.current_image = cropped
             self.display_image()
             # Add debug info to verify calculations
@@ -264,8 +298,16 @@ class ScreenshotPicker:
             )
             self.image_info.config(text=debug_info)
         except Exception as e:
+            traceback.print_exc()
             messagebox.showerror("Error", str(e))
     
+    def ocr_selection(self):
+        cropped, original_width, original_height, rect = self.crop_selected()
+        if cropped is None: return
+        ocr_result = extract_text(cropped)
+        if ocr_result:
+            self.selected_info.config(text=self.selected_info.cget('text') + f"| OCR Result: {ocr_result}")
+
     def on_press(self, event):
         # Update ctrl indicator
         if self.ctrl_pressed:
@@ -338,6 +380,7 @@ class ScreenshotPicker:
             self.selection_rect[2] = event.x
             self.selection_rect[3] = event.y
             self.canvas.coords(self.rect_id, *self.selection_rect)
+            self.selected_info.config(text=f"Selected: {self.selection_rect}")
     
     def on_release(self, event):
         if not self.selection_start or not self.current_image:
@@ -350,6 +393,7 @@ class ScreenshotPicker:
             menu = tk.Menu(self.root, tearoff=0)
             menu.add_command(label="Save selected to...", command=self.save_selection)
             menu.add_command(label="View selected", command=self.view_selection)
+            menu.add_command(label="OCR selected", command=self.ocr_selection)
             
             try:
                 menu.tk_popup(event.x_root, event.y_root)
@@ -392,6 +436,9 @@ class ScreenshotPicker:
             self.scale_slider.set(100)  # Reset zoom to 100%
             self.display_image()
             self.image_info.config(text=f"Size: {self.current_image.width}x{self.current_image.height}")
+            filename = f"{self.config['last_save_path']}/{datetime.datetime.now():%Y%m%d_%H%M%S}.png"
+            print(f"Saving screenshot to {filename}")
+            self.current_image.save(filename)
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -473,6 +520,8 @@ class ScreenshotPicker:
         if path:
             self.save_path.delete(0, tk.END)
             self.save_path.insert(0, path)
+            self.config['last_save_path'] = path
+            self.save_config()
 
 def main():
     root = tk.Tk()

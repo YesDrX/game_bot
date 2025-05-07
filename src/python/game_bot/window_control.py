@@ -165,3 +165,14 @@ def restore_window(hwnd: int) -> bool:
         True if successful, False otherwise.
     """
     set_window_state(hwnd, 'restore')
+
+def activate_window(hwnd: int) -> bool:
+    """Activate a window (bring it to front).
+
+    Args:
+        hwnd: Window handle.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    return bring_to_front(hwnd)

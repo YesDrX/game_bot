@@ -2,7 +2,7 @@ from typing import Optional, Tuple, Union, List
 
 import cv2
 import numpy as np
-import pytesseract
+from paddleocr import PaddleOCR
 from PIL import Image
 import mss
 import mss.windows
@@ -189,23 +189,30 @@ def down_sample(image: np.ndarray, scale_factor: float) -> np.ndarray:
     height = int(image.shape[0] * scale_factor)
     return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
 
-def extract_text(image: Union[np.ndarray, Image.Image], lang: Union[str, list] = 'eng') -> str:
-    """Extract text from image using Tesseract OCR.
+from paddleocr import PaddleOCR
+ocr = PaddleOCR(lang = 'ch', show_log = False, use_angle_cls = True)
+
+def extract_text(image: Union[np.ndarray, Image.Image]):
+    """Extract text from image using PaddleOCR.
     
     Args:
         image: Input image (OpenCV or PIL Image).
-        lang: Language(s) for OCR (default is English). Can be string or list of strings.
-            Examples: 'eng', 'chi_sim', ['eng', 'chi_sim']
+        lang: Language(s) for OCR (default is Chinese). Can be string or list of strings.
+            Examples: 'ch', 'en', ['ch', 'en']
         
     Returns:
-        Extracted text as string.
+        Location, extracted text, and confidence score for each detected text region.
     """
-    if isinstance(image, np.ndarray):
-        image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if len(image.shape) == 3 else image)
+    image = preprocess_for_ocr(image)
     
-    # Handle multiple languages by joining with '+' as required by Tesseract
-    lang_param = '+'.join(lang) if isinstance(lang, list) else lang
-    return pytesseract.image_to_string(image, lang=lang_param)
+    
+    if isinstance(image, Image.Image):
+        image = np.array(image)
+    
+    result = ocr.ocr(image, cls=True)
+    
+    # Extract and join all detected text
+    return result
 
 def preprocess_for_ocr(image: Union[np.ndarray, Image.Image], 
                       scale_factor: float = 1.0,
@@ -228,18 +235,10 @@ def preprocess_for_ocr(image: Union[np.ndarray, Image.Image],
         image = down_sample(image, scale_factor)
     
     # Convert to grayscale
-    gray = convert_to_grayscale(image)
+    rst = color_quantization(image, 4)
+    rst = convert_to_grayscale(rst)
     
-    # Apply smoothing to reduce noise
-    smoothed = apply_smoothing(gray, method='gaussian', kernel_size=3)
-    
-    # Apply thresholding
-    binary = apply_threshold(smoothed, method=threshold_method)
-    
-    # Clean up binary image
-    cleaned = morphological_cleanup(binary, operation='clean')
-    
-    return cleaned
+    return rst
 
 def preprocess_for_template(image: np.ndarray) -> np.ndarray:
     """Preprocess image for template matching.
